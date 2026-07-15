@@ -2,3 +2,6 @@ flask
 flask-cors
 python-dotenv
 requests
+flask-sqlalchemy
+psycopg2-binary
+flask-migrate
