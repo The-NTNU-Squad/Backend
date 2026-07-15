@@ -119,6 +119,26 @@ def me():
 
     return jsonify(user.to_dict()), 200
 
+@app.route('/api/bind/mc', methods=['POST'])
+def bind_mc():
+    from flask import request
+    data = request.get_json()
+
+    token = data.get('token', '').strip()
+    mc_username = data.get('mc_username', '').strip()
+
+    if not token or not mc_username:
+        return jsonify({'error': '缺少 token 或 mc_username'}), 400
+
+    user = User.query.filter_by(token=token).first()
+    if not user:
+        return jsonify({'error': 'token 無效'}), 401
+
+    user.mc_username = mc_username
+    db.session.commit()
+
+    return jsonify({'message': f'成功綁定 {mc_username}'}), 200
+
 @app.route('/api/players', methods=['GET'])
 def online_players():
     try:
