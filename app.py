@@ -173,6 +173,20 @@ def user_me_discord():
 
     return jsonify(user.to_dict()), 200
 
+@app.route('/api/user/me/mc', methods=['GET'])
+def user_me_mc():
+    from flask import request
+    mc_username = request.args.get('mc_username', '').strip()
+
+    if not mc_username:
+        return jsonify({'error': '缺少 mc_username'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'error': '找不到綁定帳號'}), 404
+
+    return jsonify(user.to_dict()), 200
+
 @app.route('/api/players', methods=['GET'])
 def online_players():
     try:
