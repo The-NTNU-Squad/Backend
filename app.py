@@ -159,6 +159,20 @@ def bind_discord():
 
     return jsonify({'message': f'成功綁定 Discord'}), 200
 
+@app.route('/api/user/me/discord', methods=['GET'])
+def user_me_discord():
+    from flask import request
+    discord_id = request.args.get('discord_id', '').strip()
+
+    if not discord_id:
+        return jsonify({'error': '缺少 discord_id'}), 400
+
+    user = User.query.filter_by(discord_id=discord_id).first()
+    if not user:
+        return jsonify({'error': '找不到綁定帳號'}), 404
+
+    return jsonify(user.to_dict()), 200
+
 @app.route('/api/players', methods=['GET'])
 def online_players():
     try:
