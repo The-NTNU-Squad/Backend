@@ -35,6 +35,8 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now())
     last_discord_checkin = db.Column(db.Date, nullable=True)
     pending_discord_reward = db.Column(db.Integer, default=0)
+    last_web_checkin = db.Column(db.Date, nullable=True)
+    pending_web_reward = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
@@ -256,12 +258,13 @@ def claim_reward():
     if not user:
         return jsonify({'reward': 0}), 200
 
-    reward = user.pending_discord_reward or 0
-    if reward > 0:
+    total = (user.pending_discord_reward or 0) + (user.pending_web_reward or 0)
+    if total > 0:
         user.pending_discord_reward = 0
+        user.pending_web_reward = 0
         db.session.commit()
 
-    return jsonify({'reward': reward}), 200
+    return jsonify({'reward': total}), 200
 
 @app.route('/api/reward/check', methods=['GET'])
 def check_reward():
@@ -274,7 +277,31 @@ def check_reward():
     if not user:
         return jsonify({'reward': 0}), 200
 
-    return jsonify({'reward': user.pending_discord_reward or 0}), 200
+    total = (user.pending_discord_reward or 0) + (user.pending_web_reward or 0)
+    return jsonify({'reward': total}), 200
+
+@app.route('/api/checkin/web', methods=['POST'])
+def checkin_web():
+    from datetime import datetime, timezone, timedelta
+    token = request.headers.get('X-Token')
+
+    if not token:
+        return jsonify({'error': '未提供 token'}), 401
+
+    user = User.query.filter_by(token=token).first()
+    if not user:
+        return jsonify({'error': 'token 無效'}), 401
+
+    tw_now = datetime.now(timezone(timedelta(hours=8))).date()
+
+    if user.last_web_checkin == tw_now:
+        return jsonify({'error': '今天已經簽到過了'}), 409
+
+    user.last_web_checkin = tw_now
+    user.pending_web_reward = (user.pending_web_reward or 0) + 1
+    db.session.commit()
+
+    return jsonify({'message': '簽到成功！登入 Minecraft 後會收到一顆綠寶石'}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
