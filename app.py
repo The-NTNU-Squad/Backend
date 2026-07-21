@@ -244,6 +244,37 @@ def checkin_discord():
 
     return jsonify({'message': '簽到成功！登入 Minecraft 後會收到一顆綠寶石'}), 200
 
+@app.route('/api/reward/claim', methods=['POST'])
+def claim_reward():
+    data = request.get_json()
+    mc_username = data.get('mc_username', '').strip()
+
+    if not mc_username:
+        return jsonify({'error': '缺少 mc_username'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'reward': 0}), 200
+
+    reward = user.pending_discord_reward or 0
+    if reward > 0:
+        user.pending_discord_reward = 0
+        db.session.commit()
+
+    return jsonify({'reward': reward}), 200
+
+@app.route('/api/reward/check', methods=['GET'])
+def check_reward():
+    mc_username = request.args.get('mc_username', '').strip()
+
+    if not mc_username:
+        return jsonify({'error': '缺少 mc_username'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'reward': 0}), 200
+
+    return jsonify({'reward': user.pending_discord_reward or 0}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
