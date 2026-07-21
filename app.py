@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -7,7 +7,6 @@ import os
 from dotenv import load_dotenv
 from flask_bcrypt import Bcrypt
 import secrets
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -34,6 +33,8 @@ class User(db.Model):
     mc_username = db.Column(db.String(50), nullable=True)
     discord_id = db.Column(db.String(50), nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
+    last_discord_checkin = db.Column(db.Date, nullable=True)
+    pending_discord_reward = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
@@ -57,7 +58,6 @@ def health():
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
-    from flask import request
     data = request.get_json()
 
     username = data.get('username', '').strip()
@@ -84,7 +84,6 @@ def register():
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    from flask import request
     data = request.get_json()
 
     username = data.get('username', '').strip()
@@ -106,7 +105,6 @@ def login():
 
 @app.route('/api/auth/me', methods=['GET'])
 def me():
-    from flask import request
     token = request.headers.get('X-Token')
 
     if not token:
@@ -121,7 +119,6 @@ def me():
 
 @app.route('/api/bind/mc', methods=['POST'])
 def bind_mc():
-    from flask import request
     data = request.get_json()
 
     token = data.get('token', '').strip()
@@ -141,7 +138,6 @@ def bind_mc():
 
 @app.route('/api/bind/discord', methods=['POST'])
 def bind_discord():
-    from flask import request
     data = request.get_json()
 
     token = data.get('token', '').strip()
@@ -161,7 +157,6 @@ def bind_discord():
 
 @app.route('/api/user/me/discord', methods=['GET'])
 def user_me_discord():
-    from flask import request
     discord_id = request.args.get('discord_id', '').strip()
 
     if not discord_id:
@@ -175,7 +170,6 @@ def user_me_discord():
 
 @app.route('/api/user/me/mc', methods=['GET'])
 def user_me_mc():
-    from flask import request
     mc_username = request.args.get('mc_username', '').strip()
 
     if not mc_username:
@@ -223,6 +217,32 @@ def player_info(name):
         })
     except Exception as e:
         return jsonify({ "error": str(e) }), 500
+
+@app.route('/api/checkin/discord', methods=['POST'])
+def checkin_discord():
+    from flask import request
+    from datetime import date, datetime, timezone, timedelta
+    data = request.get_json()
+    discord_id = data.get('discord_id', '').strip()
+
+    if not discord_id:
+        return jsonify({'error': '缺少 discord_id'}), 400
+
+    user = User.query.filter_by(discord_id=discord_id).first()
+    if not user:
+        return jsonify({'error': '找不到綁定帳號，請先用 /bind 綁定'}), 404
+
+    # 台灣時間 UTC+8
+    tw_now = datetime.now(timezone(timedelta(hours=8))).date()
+
+    if user.last_discord_checkin == tw_now:
+        return jsonify({'error': '今天已經簽到過了'}), 409
+
+    user.last_discord_checkin = tw_now
+    user.pending_discord_reward = (user.pending_discord_reward or 0) + 1
+    db.session.commit()
+
+    return jsonify({'message': '簽到成功！登入 Minecraft 後會收到一顆綠寶石'}), 200
 
 
 if __name__ == '__main__':
