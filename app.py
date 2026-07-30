@@ -4,6 +4,8 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 import requests
 import os
+from functools import wraps
+from datetime import date, datetime, timezone, timedelta
 from dotenv import load_dotenv
 from flask_bcrypt import Bcrypt
 import secrets
@@ -21,6 +23,21 @@ bcrypt = Bcrypt(app)
 migrate = Migrate(app, db)
 
 PLUGIN_API = os.getenv("PLUGIN_API", "http://localhost:8080")
+PLUGIN_SECRET = os.getenv("PLUGIN_SECRET")
+
+
+# ------------------------------------------------------------------
+# 驗證 decorator：保護只該由 MC plugin / DC bot 呼叫的 API
+# ------------------------------------------------------------------
+def require_plugin_secret(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        secret = request.headers.get('X-Plugin-Secret')
+        if not PLUGIN_SECRET or not secret or secret != PLUGIN_SECRET:
+            return jsonify({'error': '未授權'}), 403
+        return f(*args, **kwargs)
+    return wrapper
+
 
 # User 模型
 class User(db.Model):
@@ -37,6 +54,7 @@ class User(db.Model):
     pending_discord_reward = db.Column(db.Integer, default=0)
     last_web_checkin = db.Column(db.Date, nullable=True)
     pending_web_reward = db.Column(db.Integer, default=0)
+    coin_balance = db.Column(db.Integer, default=0, nullable=False)  # 累積金幣，網站顯示用
 
     def to_dict(self):
         return {
@@ -45,8 +63,22 @@ class User(db.Model):
             "token": self.token,
             "mc_username": self.mc_username,
             "discord_id": self.discord_id,
+            "coin_balance": self.coin_balance,
             "created_at": str(self.created_at)
         }
+
+
+# 副本獎勵紀錄（防作弊稽核 + 之後排行榜用）
+class DungeonReward(db.Model):
+    __tablename__ = "dungeon_rewards"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    dungeon_level = db.Column(db.Integer, nullable=False)
+    coins_earned = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+    user = db.relationship("User", backref="dungeon_rewards")
 
 
 @app.route('/')
@@ -120,6 +152,7 @@ def me():
     return jsonify(user.to_dict()), 200
 
 @app.route('/api/bind/mc', methods=['POST'])
+@require_plugin_secret
 def bind_mc():
     data = request.get_json()
 
@@ -139,6 +172,7 @@ def bind_mc():
     return jsonify({'message': f'成功綁定 {mc_username}'}), 200
 
 @app.route('/api/bind/discord', methods=['POST'])
+@require_plugin_secret
 def bind_discord():
     data = request.get_json()
 
@@ -158,6 +192,7 @@ def bind_discord():
     return jsonify({'message': f'成功綁定 Discord'}), 200
 
 @app.route('/api/user/me/discord', methods=['GET'])
+@require_plugin_secret
 def user_me_discord():
     discord_id = request.args.get('discord_id', '').strip()
 
@@ -171,6 +206,7 @@ def user_me_discord():
     return jsonify(user.to_dict()), 200
 
 @app.route('/api/user/me/mc', methods=['GET'])
+@require_plugin_secret
 def user_me_mc():
     mc_username = request.args.get('mc_username', '').strip()
 
@@ -184,6 +220,7 @@ def user_me_mc():
     return jsonify(user.to_dict()), 200
 
 @app.route('/api/players', methods=['GET'])
+@require_plugin_secret
 def online_players():
     try:
         res = requests.get(f"{PLUGIN_API}/players", timeout=5)
@@ -197,6 +234,7 @@ def online_players():
 
 
 @app.route('/api/player/<name>', methods=['GET'])
+@require_plugin_secret
 def player_info(name):
     try:
         res = requests.get(f"{PLUGIN_API}/players", timeout=5)
@@ -221,9 +259,8 @@ def player_info(name):
         return jsonify({ "error": str(e) }), 500
 
 @app.route('/api/checkin/discord', methods=['POST'])
+@require_plugin_secret
 def checkin_discord():
-    from flask import request
-    from datetime import date, datetime, timezone, timedelta
     data = request.get_json()
     discord_id = data.get('discord_id', '').strip()
 
@@ -247,6 +284,7 @@ def checkin_discord():
     return jsonify({'message': '簽到成功！登入 Minecraft 後會收到一顆綠寶石'}), 200
 
 @app.route('/api/reward/claim', methods=['POST'])
+@require_plugin_secret
 def claim_reward():
     data = request.get_json()
     mc_username = data.get('mc_username', '').strip()
@@ -267,6 +305,7 @@ def claim_reward():
     return jsonify({'reward': total}), 200
 
 @app.route('/api/reward/check', methods=['GET'])
+@require_plugin_secret
 def check_reward():
     mc_username = request.args.get('mc_username', '').strip()
 
@@ -282,7 +321,6 @@ def check_reward():
 
 @app.route('/api/checkin/web', methods=['POST'])
 def checkin_web():
-    from datetime import datetime, timezone, timedelta
     token = request.headers.get('X-Token')
 
     if not token:
@@ -302,6 +340,39 @@ def checkin_web():
     db.session.commit()
 
     return jsonify({'message': '簽到成功！登入 Minecraft 後會收到一顆綠寶石'}), 200
+
+
+@app.route('/api/dungeon/complete', methods=['POST'])
+@require_plugin_secret
+def dungeon_complete():
+    data = request.get_json()
+    mc_username = data.get('mc_username', '').strip()
+    dungeon_level = data.get('dungeon_level')
+    coins_earned = data.get('coins_earned')
+
+    if not mc_username or dungeon_level is None or coins_earned is None:
+        return jsonify({'error': '缺少必要欄位'}), 400
+
+    if not isinstance(coins_earned, int) or coins_earned <= 0:
+        return jsonify({'error': 'coins_earned 必須是正整數'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'error': '找不到綁定帳號'}), 404
+
+    user.coin_balance = (user.coin_balance or 0) + coins_earned
+    db.session.add(DungeonReward(
+        user_id=user.id,
+        dungeon_level=dungeon_level,
+        coins_earned=coins_earned
+    ))
+    db.session.commit()
+
+    return jsonify({
+        'message': f'第 {dungeon_level} 關完成，獲得 {coins_earned} 金幣',
+        'coin_balance': user.coin_balance
+    }), 200
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
