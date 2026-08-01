@@ -66,6 +66,36 @@ class User(db.Model):
             "created_at": str(self.created_at)
         }
 
+class ShopItem(db.Model):
+    __tablename__ = "shop_items"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.String(255), nullable=True)
+    price = db.Column(db.Integer, nullable=False)
+    mc_give_command = db.Column(db.String(255), nullable=False)  # plugin 發放時要用的道具代號/指令
+    image_url = db.Column(db.String(255), nullable=True)
+    enabled = db.Column(db.Boolean, default=True, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "price": self.price,
+            "image_url": self.image_url,
+        }
+
+
+class PendingDelivery(db.Model):
+    __tablename__ = "pending_deliveries"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    item_id = db.Column(db.Integer, db.ForeignKey("shop_items.id"), nullable=False)
+    delivered = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+    user = db.relationship("User")
+    item = db.relationship("ShopItem")
 
 # 副本獎勵紀錄（防作弊稽核 + 之後排行榜用）
 class DungeonReward(db.Model):
@@ -372,6 +402,69 @@ def dungeon_complete():
         'coin_balance': user.coin_balance
     }), 200
 
+@app.route('/api/shop/items', methods=['GET'])
+def shop_items():
+    items = ShopItem.query.filter_by(enabled=True).all()
+    return jsonify([i.to_dict() for i in items]), 200
+
+
+@app.route('/api/shop/purchase', methods=['POST'])
+def shop_purchase():
+    token = request.headers.get('X-Token')
+    if not token:
+        return jsonify({'error': '未提供 token'}), 401
+
+    user = User.query.filter_by(token=token).first()
+    if not user:
+        return jsonify({'error': 'token 無效'}), 401
+
+    data = request.get_json()
+    item_id = data.get('item_id')
+    if not item_id:
+        return jsonify({'error': '缺少 item_id'}), 400
+
+    item = ShopItem.query.filter_by(id=item_id, enabled=True).first()
+    if not item:
+        return jsonify({'error': '找不到此商品'}), 404
+
+    if not user.mc_username:
+        return jsonify({'error': '請先綁定 Minecraft 帳號'}), 400
+
+    if user.coin_balance < item.price:
+        return jsonify({'error': '金幣不足'}), 400
+
+    user.coin_balance -= item.price
+    db.session.add(PendingDelivery(user_id=user.id, item_id=item.id))
+    db.session.commit()
+
+    return jsonify({
+        'message': f'購買成功！{item.name} 將於你上線後發放',
+        'coin_balance': user.coin_balance
+    }), 200
+
+@app.route('/api/delivery/check', methods=['GET'])
+@require_plugin_secret
+def delivery_check():
+    mc_username = request.args.get('mc_username', '').strip()
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'items': []}), 200
+
+    pending = PendingDelivery.query.filter_by(user_id=user.id, delivered=False).all()
+    return jsonify({
+        'items': [{'delivery_id': p.id, 'command': p.item.mc_give_command} for p in pending]
+    }), 200
+
+
+@app.route('/api/delivery/claim', methods=['POST'])
+@require_plugin_secret
+def delivery_claim():
+    data = request.get_json()
+    delivery_ids = data.get('delivery_ids', [])
+    PendingDelivery.query.filter(PendingDelivery.id.in_(delivery_ids)) \
+        .update({'delivered': True}, synchronize_session=False)
+    db.session.commit()
+    return jsonify({'message': 'ok'}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
