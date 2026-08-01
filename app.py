@@ -25,8 +25,6 @@ migrate = Migrate(app, db)
 PLUGIN_API = os.getenv("PLUGIN_API", "http://localhost:8080")
 PLUGIN_SECRET = os.getenv("PLUGIN_SECRET")
 
-app.logger.warning("PLUGIN_SECRET = %r", PLUGIN_SECRET)
-
 # ------------------------------------------------------------------
 # 驗證 decorator：保護只該由 MC plugin / DC bot 呼叫的 API
 # ------------------------------------------------------------------
