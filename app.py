@@ -119,8 +119,8 @@ def admin_update_item(item_id):
         item.mc_give_command = data['mc_give_command'].strip()
     if 'image_url' in data:
         item.image_url = data['image_url']
-    if 'enabled' in data:
-        item.enabled = data['enabled']
+    if 'enchant_info' in data:
+        item.enchant_info = data['enchant_info']
     if 'enabled' in data:
         item.enabled = data['enabled']
 
