@@ -88,6 +88,7 @@ def admin_create_item():
         description=description,
         price=price,
         mc_give_command=mc_give_command,
+        enchant_info=data.get('enchant_info'),
         image_url=image_url,
         enabled=enabled
     )
@@ -173,6 +174,7 @@ class ShopItem(db.Model):
     description = db.Column(db.String(255), nullable=True)
     price = db.Column(db.Integer, nullable=False)
     mc_give_command = db.Column(db.String(255), nullable=False)  # plugin 發放時要用的道具代號/指令
+    enchant_info = db.Column(db.String(255), nullable=True) # 附魔說明
     image_url = db.Column(db.String(255), nullable=True)
     enabled = db.Column(db.Boolean, default=True, nullable=False)
 
@@ -182,6 +184,7 @@ class ShopItem(db.Model):
             "name": self.name,
             "description": self.description,
             "price": self.price,
+            "enchant_info": self.enchant_info,
             "image_url": self.image_url,
         }
 
