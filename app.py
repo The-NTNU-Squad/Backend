@@ -24,7 +24,7 @@ migrate = Migrate(app, db)
 
 PLUGIN_API = os.getenv("PLUGIN_API", "http://localhost:8080")
 PLUGIN_SECRET = os.getenv("PLUGIN_SECRET")
-
+ADMIN_SECRET = os.getenv("ADMIN_SECRET")
 # ------------------------------------------------------------------
 # 驗證 decorator：保護只該由 MC plugin / DC bot 呼叫的 API
 # ------------------------------------------------------------------
@@ -36,6 +36,106 @@ def require_plugin_secret(f):
             return jsonify({'error': '未授權'}), 403
         return f(*args, **kwargs)
     return wrapper
+
+def require_admin_secret(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        secret = request.headers.get('X-Admin-Secret')
+        if not ADMIN_SECRET or not secret or secret != ADMIN_SECRET:
+            return jsonify({'error': '未授權'}), 403
+        return f(*args, **kwargs)
+    return wrapper
+
+# ------------------------------------------------------------------
+# 商店管理 API（僅限 admin）
+# ------------------------------------------------------------------
+
+@app.route('/api/admin/shop/items', methods=['GET'])
+@require_admin_secret
+def admin_list_items():
+    items = ShopItem.query.all()
+    return jsonify([{
+        "id": i.id,
+        "name": i.name,
+        "description": i.description,
+        "price": i.price,
+        "mc_give_command": i.mc_give_command,
+        "image_url": i.image_url,
+        "enabled": i.enabled
+    } for i in items]), 200
+
+
+@app.route('/api/admin/shop/items', methods=['POST'])
+@require_admin_secret
+def admin_create_item():
+    data = request.get_json()
+
+    name = data.get('name', '').strip()
+    price = data.get('price')
+    mc_give_command = data.get('mc_give_command', '').strip()
+    description = data.get('description', '').strip()
+    image_url = data.get('image_url')
+    enabled = data.get('enabled', True)
+
+    if not name or not mc_give_command or price is None:
+        return jsonify({'error': '缺少必要欄位（name, price, mc_give_command）'}), 400
+
+    if not isinstance(price, int) or price <= 0:
+        return jsonify({'error': 'price 必須是正整數'}), 400
+
+    item = ShopItem(
+        name=name,
+        description=description,
+        price=price,
+        mc_give_command=mc_give_command,
+        image_url=image_url,
+        enabled=enabled
+    )
+    db.session.add(item)
+    db.session.commit()
+
+    return jsonify({'message': f'商品「{name}」新增成功', 'id': item.id}), 201
+
+
+@app.route('/api/admin/shop/items/<int:item_id>', methods=['PUT'])
+@require_admin_secret
+def admin_update_item(item_id):
+    item = ShopItem.query.get(item_id)
+    if not item:
+        return jsonify({'error': '找不到此商品'}), 404
+
+    data = request.get_json()
+
+    if 'name' in data:
+        item.name = data['name'].strip()
+    if 'description' in data:
+        item.description = data['description'].strip()
+    if 'price' in data:
+        if not isinstance(data['price'], int) or data['price'] <= 0:
+            return jsonify({'error': 'price 必須是正整數'}), 400
+        item.price = data['price']
+    if 'mc_give_command' in data:
+        item.mc_give_command = data['mc_give_command'].strip()
+    if 'image_url' in data:
+        item.image_url = data['image_url']
+    if 'enabled' in data:
+        item.enabled = data['enabled']
+
+    db.session.commit()
+    return jsonify({'message': f'商品「{item.name}」已更新'}), 200
+
+
+@app.route('/api/admin/shop/items/<int:item_id>', methods=['DELETE'])
+@require_admin_secret
+def admin_delete_item(item_id):
+    item = ShopItem.query.get(item_id)
+    if not item:
+        return jsonify({'error': '找不到此商品'}), 404
+
+    # 用軟刪除（下架），不是真的砍掉，保留歷史購買紀錄的關聯完整性
+    item.enabled = False
+    db.session.commit()
+    return jsonify({'message': f'商品「{item.name}」已下架'}), 200
 
 
 # User 模型
