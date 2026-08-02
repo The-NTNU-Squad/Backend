@@ -121,6 +121,8 @@ def admin_update_item(item_id):
         item.image_url = data['image_url']
     if 'enabled' in data:
         item.enabled = data['enabled']
+    if 'enabled' in data:
+        item.enabled = data['enabled']
 
     db.session.commit()
     return jsonify({'message': f'商品「{item.name}」已更新'}), 200
