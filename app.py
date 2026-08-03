@@ -157,6 +157,7 @@ class User(db.Model):
     last_web_checkin = db.Column(db.Date, nullable=True)
     pending_web_reward = db.Column(db.Integer, default=0)
     coin_balance = db.Column(db.Integer, default=0, nullable=False)  # 累積金幣，網站顯示用
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)
 
     def to_dict(self):
         return {
@@ -166,7 +167,8 @@ class User(db.Model):
             "mc_username": self.mc_username,
             "discord_id": self.discord_id,
             "coin_balance": self.coin_balance,
-            "created_at": str(self.created_at)
+            "created_at": str(self.created_at),
+            "is_admin": self.is_admin
         }
 
 class ShopItem(db.Model):
