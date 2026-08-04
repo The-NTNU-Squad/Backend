@@ -51,7 +51,7 @@ def require_admin_secret(f):
 # ------------------------------------------------------------------
 
 @app.route('/api/admin/shop/items', methods=['GET'])
-@require_admin_secret
+@require_admin_login
 def admin_list_items():
     items = ShopItem.query.all()
     return jsonify([{
@@ -66,7 +66,7 @@ def admin_list_items():
 
 
 @app.route('/api/admin/shop/items', methods=['POST'])
-@require_admin_secret
+@require_admin_login
 def admin_create_item():
     data = request.get_json()
 
@@ -99,7 +99,7 @@ def admin_create_item():
 
 
 @app.route('/api/admin/shop/items/<int:item_id>', methods=['PUT'])
-@require_admin_secret
+@require_admin_login
 def admin_update_item(item_id):
     item = ShopItem.query.get(item_id)
     if not item:
@@ -129,7 +129,7 @@ def admin_update_item(item_id):
 
 
 @app.route('/api/admin/shop/items/<int:item_id>', methods=['DELETE'])
-@require_admin_secret
+@require_admin_login
 def admin_delete_item(item_id):
     item = ShopItem.query.get(item_id)
     if not item:
@@ -439,6 +439,18 @@ def claim_reward():
         db.session.commit()
 
     return jsonify({'reward': total}), 200
+
+def require_admin_login(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get('X-Token')
+        if not token:
+            return jsonify({'error': '未提供 token'}), 401
+        user = User.query.filter_by(token=token).first()
+        if not user or not user.is_admin:
+            return jsonify({'error': '權限不足'}), 403
+        return f(*args, **kwargs)
+    return wrapper
 
 @app.route('/api/reward/check', methods=['GET'])
 @require_plugin_secret
