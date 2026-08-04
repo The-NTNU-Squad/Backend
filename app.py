@@ -46,6 +46,17 @@ def require_admin_secret(f):
         return f(*args, **kwargs)
     return wrapper
 
+def require_admin_login(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get('X-Token')
+        if not token:
+            return jsonify({'error': '未提供 token'}), 401
+        user = User.query.filter_by(token=token).first()
+        if not user or not user.is_admin:
+            return jsonify({'error': '權限不足'}), 403
+        return f(*args, **kwargs)
+    return wrapper
 # ------------------------------------------------------------------
 # 商店管理 API（僅限 admin）
 # ------------------------------------------------------------------
@@ -439,18 +450,6 @@ def claim_reward():
         db.session.commit()
 
     return jsonify({'reward': total}), 200
-
-def require_admin_login(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        token = request.headers.get('X-Token')
-        if not token:
-            return jsonify({'error': '未提供 token'}), 401
-        user = User.query.filter_by(token=token).first()
-        if not user or not user.is_admin:
-            return jsonify({'error': '權限不足'}), 403
-        return f(*args, **kwargs)
-    return wrapper
 
 @app.route('/api/reward/check', methods=['GET'])
 @require_plugin_secret
