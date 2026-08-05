@@ -670,7 +670,7 @@ def check_player_count():
 
 if __name__ == '__main__':
     import os
-    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         scheduler = BackgroundScheduler()
         scheduler.add_job(check_player_count, 'interval', minutes=1)
         scheduler.start()
