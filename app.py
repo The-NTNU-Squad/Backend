@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone, timedelta
 from dotenv import load_dotenv
 from flask_bcrypt import Bcrypt
 import secrets
+from apscheduler.schedulers.background import BackgroundScheduler
 load_dotenv()
 
 app = Flask(__name__)
@@ -227,6 +228,28 @@ class DungeonReward(db.Model):
 
     user = db.relationship("User", backref="dungeon_rewards")
 
+class PlayerCountLog(db.Model):
+    __tablename__ = "player_count_logs"
+    id = db.Column(db.Integer, primary_key=True)
+    count = db.Column(db.Integer, nullable=False)
+    recorded_at = db.Column(db.DateTime, server_default=db.func.now())
+
+class ServerAlert(db.Model):
+    __tablename__ = "server_alerts"
+    id = db.Column(db.Integer, primary_key=True)
+    type = db.Column(db.String(50), nullable=False)  # 例如 "player_count_drop"
+    message = db.Column(db.String(255), nullable=False)
+    resolved = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "type": self.type,
+            "message": self.message,
+            "resolved": self.resolved,
+            "created_at": str(self.created_at),
+        }
 
 @app.route('/')
 def index():
@@ -584,5 +607,71 @@ def delivery_claim():
     db.session.commit()
     return jsonify({'message': 'ok'}), 200
 
+@app.route('/api/admin/monitor/player-count', methods=['GET'])
+@require_admin_login
+def monitor_player_count():
+    hours = request.args.get('hours', 6, type=int)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    logs = PlayerCountLog.query.filter(PlayerCountLog.recorded_at >= since) \
+        .order_by(PlayerCountLog.recorded_at.asc()).all()
+    return jsonify([
+        {"count": l.count, "recorded_at": str(l.recorded_at)} for l in logs
+    ]), 200
+
+
+@app.route('/api/admin/monitor/alerts', methods=['GET'])
+@require_admin_login
+def monitor_alerts():
+    alerts = ServerAlert.query.order_by(ServerAlert.created_at.desc()).limit(50).all()
+    return jsonify([a.to_dict() for a in alerts]), 200
+
+
+@app.route('/api/admin/monitor/alerts/<int:alert_id>/resolve', methods=['POST'])
+@require_admin_login
+def resolve_alert(alert_id):
+    alert = ServerAlert.query.get(alert_id)
+    if not alert:
+        return jsonify({'error': '找不到此警告'}), 404
+    alert.resolved = True
+    db.session.commit()
+    return jsonify({'message': '已標記為已處理'}), 200
+
+def check_player_count():
+    with app.app_context():
+        try:
+            res = requests.get(f"{PLUGIN_API}/players", timeout=5)
+            res.raise_for_status()
+            data = res.json()
+            players = data.get("players", "")
+            count = len(players.split(",")) if players else 0
+        except Exception as e:
+            app.logger.warning(f"排程查詢線上人數失敗: {e}")
+            return
+
+        db.session.add(PlayerCountLog(count=count))
+        db.session.commit()
+
+        # 簡單規則：查最近 5 筆記錄，若全部都是 0 人，且過去 1 小時內平均人數 > 0，才視為異常
+        recent = PlayerCountLog.query.order_by(PlayerCountLog.id.desc()).limit(5).all()
+        if len(recent) == 5 and all(r.count == 0 for r in recent):
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+            hist = PlayerCountLog.query.filter(PlayerCountLog.recorded_at >= one_hour_ago).all()
+            avg = sum(r.count for r in hist) / len(hist) if hist else 0
+
+            if avg > 0:
+                # 避免重複發同一個未解決的警告
+                existing = ServerAlert.query.filter_by(type="player_count_drop", resolved=False).first()
+                if not existing:
+                    db.session.add(ServerAlert(
+                        type="player_count_drop",
+                        message="連續 5 次查詢在線人數皆為 0，可能伺服器異常"
+                    ))
+                    db.session.commit()
+
 if __name__ == '__main__':
+    import os
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(check_player_count, 'interval', minutes=1)
+        scheduler.start()
     app.run(debug=True, host='0.0.0.0')
