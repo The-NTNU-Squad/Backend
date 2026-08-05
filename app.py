@@ -224,6 +224,7 @@ class DungeonReward(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     dungeon_level = db.Column(db.Integer, nullable=False)
     coins_earned = db.Column(db.Integer, nullable=False)
+    clear_time_ms = db.Column(db.BigInteger, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     user = db.relationship("User", backref="dungeon_rewards")
@@ -250,6 +251,17 @@ class ServerAlert(db.Model):
             "resolved": self.resolved,
             "created_at": str(self.created_at),
         }
+
+# 新增：每次進入副本的紀錄（不論有沒有通關）
+class DungeonPlay(db.Model):
+    __tablename__ = "dungeon_plays"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    dungeon_level = db.Column(db.Integer, nullable=False)
+    started_at = db.Column(db.DateTime, server_default=db.func.now())
+
+    user = db.relationship("User", backref="dungeon_plays")
 
 @app.route('/')
 def index():
@@ -511,6 +523,24 @@ def checkin_web():
 
     return jsonify({'message': '簽到成功！登入 Minecraft 後會收到一顆綠寶石'}), 200
 
+@app.route('/api/dungeon/start', methods=['POST'])
+@require_plugin_secret
+def dungeon_start():
+    data = request.get_json()
+    mc_username = data.get('mc_username', '').strip()
+    dungeon_level = data.get('dungeon_level')
+
+    if not mc_username or dungeon_level is None:
+        return jsonify({'error': '缺少必要欄位'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'error': '找不到綁定帳號'}), 404
+
+    db.session.add(DungeonPlay(user_id=user.id, dungeon_level=dungeon_level))
+    db.session.commit()
+
+    return jsonify({'message': 'ok'}), 200
 
 @app.route('/api/dungeon/complete', methods=['POST'])
 @require_plugin_secret
@@ -519,6 +549,7 @@ def dungeon_complete():
     mc_username = data.get('mc_username', '').strip()
     dungeon_level = data.get('dungeon_level')
     coins_earned = data.get('coins_earned')
+    clear_time_ms = data.get('clear_time_ms')  # 新增，可為 None
 
     if not mc_username or dungeon_level is None or coins_earned is None:
         return jsonify({'error': '缺少必要欄位'}), 400
@@ -534,7 +565,8 @@ def dungeon_complete():
     db.session.add(DungeonReward(
         user_id=user.id,
         dungeon_level=dungeon_level,
-        coins_earned=coins_earned
+        coins_earned=coins_earned,
+        clear_time_ms=clear_time_ms  # 新增
     ))
     db.session.commit()
 
@@ -542,6 +574,38 @@ def dungeon_complete():
         'message': f'第 {dungeon_level} 關完成，獲得 {coins_earned} 金幣',
         'coin_balance': user.coin_balance
     }), 200
+
+@app.route('/api/dungeon/stats', methods=['GET'])
+@require_plugin_secret
+def dungeon_stats():
+    mc_username = request.args.get('mc_username', '').strip()
+    if not mc_username:
+        return jsonify({'error': '缺少 mc_username'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'stats': {}}), 200
+
+    play_counts = db.session.query(
+        DungeonPlay.dungeon_level, db.func.count(DungeonPlay.id)
+    ).filter_by(user_id=user.id).group_by(DungeonPlay.dungeon_level).all()
+
+    avg_times = db.session.query(
+        DungeonReward.dungeon_level, db.func.avg(DungeonReward.clear_time_ms)
+    ).filter_by(user_id=user.id).filter(
+        DungeonReward.clear_time_ms.isnot(None)
+    ).group_by(DungeonReward.dungeon_level).all()
+
+    stats = {}
+    for level, count in play_counts:
+        stats[str(level)] = {'play_count': count, 'avg_clear_time_ms': 0}
+    for level, avg_ms in avg_times:
+        key = str(level)
+        if key not in stats:
+            stats[key] = {'play_count': 0, 'avg_clear_time_ms': 0}
+        stats[key]['avg_clear_time_ms'] = int(avg_ms) if avg_ms else 0
+
+    return jsonify({'stats': stats}), 200
 
 @app.route('/api/shop/items', methods=['GET'])
 def shop_items():
