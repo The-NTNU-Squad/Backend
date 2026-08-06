@@ -170,6 +170,7 @@ class User(db.Model):
     pending_web_reward = db.Column(db.Integer, default=0)
     coin_balance = db.Column(db.Integer, default=0, nullable=False)  # 累積金幣，網站顯示用
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
+    unlocked_level = db.Column(db.Integer, default=1, nullable=False)
 
     def to_dict(self):
         return {
@@ -180,7 +181,8 @@ class User(db.Model):
             "discord_id": self.discord_id,
             "coin_balance": self.coin_balance,
             "created_at": str(self.created_at),
-            "is_admin": self.is_admin
+            "is_admin": self.is_admin,
+            "unlocked_level": self.unlocked_level
         }
 
 class ShopItem(db.Model):
@@ -574,6 +576,27 @@ def dungeon_complete():
         'message': f'第 {dungeon_level} 關完成，獲得 {coins_earned} 金幣',
         'coin_balance': user.coin_balance
     }), 200
+
+@app.route('/api/dungeon/unlock', methods=['POST'])
+@require_plugin_secret
+def dungeon_unlock():
+    data = request.get_json()
+    mc_username = data.get('mc_username', '').strip()
+    unlocked_level = data.get('unlocked_level')
+
+    if not mc_username or unlocked_level is None:
+        return jsonify({'error': '缺少必要欄位'}), 400
+
+    user = User.query.filter_by(mc_username=mc_username).first()
+    if not user:
+        return jsonify({'error': '找不到綁定帳號'}), 404
+
+    # 只往上解鎖，不會因為傳入較小的值而倒退
+    if unlocked_level > user.unlocked_level:
+        user.unlocked_level = unlocked_level
+        db.session.commit()
+
+    return jsonify({'unlocked_level': user.unlocked_level}), 200
 
 @app.route('/api/dungeon/stats', methods=['GET'])
 @require_plugin_secret
